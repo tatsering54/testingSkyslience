@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Coordinated Drone Formation</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background: #181A1B;
+            min-height: 100vh;
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        
+        .title {
+            color: #FAFAFA;
+            text-align: center;
+            margin-bottom: 20px;
+            text-shadow: 2px 2px 8px rgba(0,0,0,0.7);
+            font-size: 2rem;
+            font-weight: bold;
+        }
+        
+        .controls {
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background: #23272A;
+            color: #FAFAFA;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 0 10px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            transition: all 0.3s ease;
+            font-weight: bold;
+        }
+        
+        button:hover {
+            background: #2C2F33;
+            transform: translateY(-2px);
+            box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+        }
+        
+        button:active {
+            transform: translateY(0px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        button:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        #skyCanvas {
+            border: 3px solid #444;
+            border-radius: 15px;
+            background: #23272A;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+            display: block;
+        }
+        
+        #noiseCanvas {
+            border: 3px solid #444;
+            border-radius: 15px;
+            background: #23272A;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.7);
+            display: block;
+            margin-top: 20px;
+        }
+        
+        .legend {
+            margin-top: 20px;
+            background: rgba(30, 32, 34, 0.98);
+            padding: 20px;
+            border-radius: 15px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+            border: 2px solid #333;
+            max-width: 800px;
+            width: 100%;
+        }
+        
+        .legend-item {
+            display: inline-block;
+            margin: 8px 20px;
+            font-weight: bold;
+            font-size: 14px;
+            color: #FAFAFA;
+        }
+        
+        .legend-dot {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            margin-right: 10px;
+            vertical-align: middle;
+            border: 2px solid #23272A;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        @media (max-width: 768px) {
+            .title {
+                font-size: 1.5rem;
+                padding: 0 10px;
+            }
+            #skyCanvas {
+                width: 100%;
+                max-width: 900px;
+                height: auto;
+            }
+            .legend {
+                padding: 15px;
+                margin: 15px 10px;
+            }
+            .legend-item {
+                display: block;
+                margin: 10px 0;
+                text-align: left;
+            }
+            button {
+                padding: 10px 20px;
+                font-size: 14px;
+                margin: 5px;
+            }
+        }
+        @media (max-width: 480px) {
+            body {
+                padding: 10px;
+            }
+            .title {
+                font-size: 1.2rem;
+                margin-bottom: 15px;
+            }
+            .controls {
+                margin-bottom: 15px;
+            }
+            button {
+                display: block;
+                width: 200px;
+                margin: 5px auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1 class="title">Sky Silence Prototype v.1</h1>
+    
+    <div class="controls">
+        <button onclick="startSimulation()" id="startBtn">Start Formation Flight</button>
+        <button onclick="resetSimulation()" id="resetBtn">Reset</button>
+    </div>
+    
+    <canvas id="skyCanvas" width="900" height="600"></canvas>
+    
+    <div class="controls" style="margin-top: 30px;">
+        <button onclick="startNoiseAnalysis()" id="startNoiseBtn">Start Noise Analysis</button>
+        <button onclick="resetNoiseAnalysis()" id="resetNoiseBtn">Reset Noise Analysis</button>
+    </div>
+    
+    <canvas id="noiseCanvas" width="900" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('skyCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // Noise canvas setup
+        const noiseCanvas = document.getElementById('noiseCanvas');
+        const noiseCtx = noiseCanvas.getContext('2d');
+        
+        let drones = [];
+        let secondaryDrones = [];
+        let animationId;
+        let noiseAnimationId;
+        let simulationStarted = false;
+        let noiseAnalysisStarted = false;
+        let accidentZone = { x: 450, y: 300, radius: 80 };
+        let detectionRadius = 140;
+        let avoidanceTriggered = false;
+        
+        // Noise level variables
+        let currentNoiseLevel1 = 70; // dB level for div 1 (55-85 dB)
+        let currentNoiseLevel2 = 42; // dB level for div 2 (30-55 dB with cancellation)
+        let targetNoiseLevel2 = 42; // Target level for smooth transitions
+        let noiseAnimationTime = 0;
+        let noiseCancellationActive = false;
+        let cancellationPulse = 0;
+        
+        // Noise drone positions
+        let noiseDrones1 = [];
+        let noiseDrones2 = [];
+        let mainDrone1 = { x: 0, y: 0, angle: 0 };
+        let mainDrone2 = { x: 0, y: 0, angle: 0 };
+        
+        // Formation leader coordinates - all drones follow this path
+        let formationLeader = {
+            x: 50,
+            y: 300,
+            targetX: 850,
+            targetY: 300,
+            speed: 1.8,
+            avoiding: false,
+            avoidancePhase: 0,
+            avoidanceWaypoints: [],
+            currentWaypointIndex: 0,
+            opacity: 1.0,
+            vanishing: false
+        };
+        
+        // Secondary formation leader - flies below main formation (left to right)
+        let secondaryLeader = {
+            x: 50,
+            y: 450,
+            targetX: 850,
+            targetY: 450,
+            speed: 1.5,
+            opacity: 1.0,
+            vanishing: false
+        };
+        
+        class Drone {
+            constructor(x, y, id, offsetX, offsetY, isSecondary = false) {
+                this.startX = x;
+                this.startY = y;
+                this.id = id;
+                this.offsetX = offsetX; // Offset from formation leader
+                this.offsetY = offsetY;
+                this.x = x + offsetX;
+                this.y = y + offsetY;
+                this.size = 36;
+                this.angle = 0;
+                this.propellerAngle = 0;
+                this.isSecondary = isSecondary;
+            }
+            
+            update() {
+                this.propellerAngle += 0.4;
+                
+                // Follow respective formation leader with offset
+                let leader = this.isSecondary ? secondaryLeader : formationLeader;
+                const targetX = leader.x + this.offsetX;
+                const targetY = leader.y + this.offsetY;
+                
+                // Calculate movement direction
+                const dx = targetX - this.x;
+                const dy = targetY - this.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                
+                if (distance > 2) {
+                    this.angle = Math.atan2(dy, dx);
+                    // Move smoothly towards formation position
+                    this.x += (dx / distance) * leader.speed;
+                    this.y += (dy / distance) * leader.speed;
+                }
+            }
+            
+            draw() {
+                ctx.save();
+                ctx.translate(this.x, this.y);
+                ctx.rotate(this.angle);
+                
+                // Set opacity based on formation leader
+                const leader = this.isSecondary ? secondaryLeader : formationLeader;
+                ctx.globalAlpha = leader.opacity;
+                
+                // Set drone color based on type and formation leader's state
+                let droneColor;
+                if (this.isSecondary) {
+                    droneColor = '#2196F3'; // Blue for secondary drones
+                } else {
+                    droneColor = formationLeader.avoiding ? '#FF9800' : '#4CAF50';
+                }
+                
+                // Draw drone body
+                ctx.fillStyle = droneColor;
+                ctx.fillRect(-this.size/2, -this.size/3, this.size, this.size/1.5);
+                
+                // Draw propellers
+                ctx.fillStyle = '#333';
+                const propOffset = this.size * 0.6;
+                
+                // Four propeller positions
+                const positions = [
+                    {x: -propOffset, y: -propOffset/2},
+                    {x: propOffset, y: -propOffset/2},
+                    {x: -propOffset, y: propOffset/2},
+                    {x: propOffset, y: propOffset/2}
+                ];
+                
+                for (let i = 0; i < positions.length; i++) {
+                    const pos = positions[i];
+                    ctx.save();
+                    ctx.translate(pos.x, pos.y);
+                    ctx.rotate(this.propellerAngle);
+                    
+                    // Propeller blades
+                    ctx.fillStyle = 'rgba(100, 100, 100, 0.7)';
+                    ctx.fillRect(-18, -3, 36, 6);
+                    ctx.fillRect(-3, -18, 6, 36);
+                    
+                    ctx.restore();
+                }
+                
+                // Draw drone center
+                ctx.fillStyle = this.isSecondary ? '#1976D2' : '#2196F3';
+                ctx.beginPath();
+                ctx.arc(0, 0, 9, 0, Math.PI * 2);
+                ctx.fill();
+                
+                // Draw drone ID
+                ctx.fillStyle = 'white';
+                ctx.font = 'bold 24px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText(this.id.toString(), 0, 6);
+                
+                // Reset alpha
+                ctx.globalAlpha = 1.0;
+                ctx.restore();
+            }
+        }
+        
+        function updateFormationLeader() {
+            // Check if approaching accident zone
+            const distToAccident = Math.sqrt(
+                (formationLeader.x - accidentZone.x) * (formationLeader.x - accidentZone.x) + 
+                (formationLeader.y - accidentZone.y) * (formationLeader.y - accidentZone.y)
+            );
+            
+            if (!avoidanceTriggered && distToAccident < detectionRadius) {
+                avoidanceTriggered = true;
+                formationLeader.avoiding = true;
+                formationLeader.avoidancePhase = 1;
+                formationLeader.currentWaypointIndex = 0;
+                
+                // Create avoidance waypoints for coordinated movement
+                formationLeader.avoidanceWaypoints = [
+                    { x: accidentZone.x - 180, y: accidentZone.y - 120 }, // Go up and around
+                    { x: accidentZone.x, y: accidentZone.y - 120 },      // Pass above accident
+                    { x: accidentZone.x + 180, y: accidentZone.y - 120 }, // Continue around
+                    { x: formationLeader.targetX, y: formationLeader.targetY } // Return to original target
+                ];
+            }
+            
+            let currentTarget = {
+                x: formationLeader.targetX,
+                y: formationLeader.targetY
+            };
+            
+            // If avoiding, follow waypoints
+            if (formationLeader.avoiding && formationLeader.avoidanceWaypoints.length > 0) {
+                const currentWaypoint = formationLeader.avoidanceWaypoints[formationLeader.currentWaypointIndex];
+                if (currentWaypoint) {
+                    currentTarget = currentWaypoint;
+                    
+                    // Check if reached current waypoint
+                    const distToWaypoint = Math.sqrt(
+                        (formationLeader.x - currentWaypoint.x) * (formationLeader.x - currentWaypoint.x) + 
+                        (formationLeader.y - currentWaypoint.y) * (formationLeader.y - currentWaypoint.y)
+                    );
+                    
+                    if (distToWaypoint < 30) {
+                        formationLeader.currentWaypointIndex++;
+                        
+                        // If reached final waypoint, end avoidance
+                        if (formationLeader.currentWaypointIndex >= formationLeader.avoidanceWaypoints.length) {
+                            formationLeader.avoiding = false;
+                            formationLeader.avoidanceWaypoints = [];
+                            formationLeader.currentWaypointIndex = 0;
+                        }
+                    }
+                }
+            }
+            
+            // Move formation leader towards current target
+            const dx = currentTarget.x - formationLeader.x;
+            const dy = currentTarget.y - formationLeader.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 3) {
+                formationLeader.x += (dx / distance) * formationLeader.speed;
+                formationLeader.y += (dy / distance) * formationLeader.speed;
+            } else {
+                // Start vanishing when reaching the target
+                if (!formationLeader.vanishing) {
+                    formationLeader.vanishing = true;
+                }
+            }
+            
+            // Handle vanishing effect
+            if (formationLeader.vanishing) {
+                formationLeader.opacity -= 0.02; // Gradual fade out
+                if (formationLeader.opacity <= 0) {
+                    formationLeader.opacity = 0;
+                }
+            }
+        }
+        
+        function updateSecondaryLeader() {
+            // Move secondary formation leader towards target (simple straight line)
+            const dx = secondaryLeader.targetX - secondaryLeader.x;
+            const dy = secondaryLeader.targetY - secondaryLeader.y;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+            
+            if (distance > 3) {
+                secondaryLeader.x += (dx / distance) * secondaryLeader.speed;
+                secondaryLeader.y += (dy / distance) * secondaryLeader.speed;
+            } else {
+                // Start vanishing when reaching the target
+                if (!secondaryLeader.vanishing) {
+                    secondaryLeader.vanishing = true;
+                }
+            }
+            
+            // Handle vanishing effect
+            if (secondaryLeader.vanishing) {
+                secondaryLeader.opacity -= 0.02; // Gradual fade out
+                if (secondaryLeader.opacity <= 0) {
+                    secondaryLeader.opacity = 0;
+                }
+            }
+        }
+        
+        function drawFormationPath() {
+            // Draw main formation leader path
+            ctx.strokeStyle = formationLeader.avoiding ? '#FF9800' : '#4CAF50';
+            ctx.setLineDash(formationLeader.avoiding ? [5, 5] : [8, 8]);
+            ctx.lineWidth = 2;
+            ctx.globalAlpha = 0.7;
+            
+            ctx.beginPath();
+            ctx.moveTo(formationLeader.x, formationLeader.y);
+            
+            if (formationLeader.avoiding && formationLeader.avoidanceWaypoints.length > 0) {
+                // Show avoidance path
+                for (let i = formationLeader.currentWaypointIndex; i < formationLeader.avoidanceWaypoints.length; i++) {
+                    const waypoint = formationLeader.avoidanceWaypoints[i];
+                    ctx.lineTo(waypoint.x, waypoint.y);
+                }
+            } else {
+                // Show direct path to target
+                ctx.lineTo(formationLeader.targetX, formationLeader.targetY);
+            }
+            
+            ctx.stroke();
+            
+            // Draw secondary formation path
+            ctx.strokeStyle = '#2196F3';
+            ctx.setLineDash([6, 6]);
+            ctx.beginPath();
+            ctx.moveTo(secondaryLeader.x, secondaryLeader.y);
+            ctx.lineTo(secondaryLeader.targetX, secondaryLeader.targetY);
+            ctx.stroke();
+            
+            ctx.setLineDash([]);
+            ctx.globalAlpha = 1;
+        }
+        
+        function drawAccidentZone() {
+            // Draw accident zone circle
+            ctx.strokeStyle = '#F44336';
+            ctx.lineWidth = 3;
+            ctx.setLineDash([8, 8]);
+            ctx.beginPath();
+            ctx.arc(accidentZone.x, accidentZone.y, accidentZone.radius, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.setLineDash([]);
+            
+            // Draw single warning sign at the top
+            drawWarningSign(accidentZone.x, accidentZone.y - 120, 2);
+            
+            // Draw "DANGER" text
+            ctx.fillStyle = '#F44336';
+            ctx.font = 'bold 16px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('ACCIDENT ZONE', accidentZone.x, accidentZone.y - 5);
+            ctx.fillText('DANGER', accidentZone.x, accidentZone.y + 15);
+        }
+        
+        function drawWarningSign(x, y, scale = 1) {
+            // Draw warning triangle with scaling
+            const size = 12 * scale;
+            ctx.fillStyle = '#FFD700';
+            ctx.strokeStyle = '#FF6B00';
+            ctx.lineWidth = 2 * scale;
+            
+            ctx.beginPath();
+            ctx.moveTo(x, y - size * 1.25);
+            ctx.lineTo(x - size, y + size * 0.8);
+            ctx.lineTo(x + size, y + size * 0.8);
+            ctx.closePath();
+            ctx.fill();
+            ctx.stroke();
+            
+            // Draw exclamation mark with scaling
+            ctx.fillStyle = '#FF6B00';
+            ctx.font = `bold ${12 * scale}px Arial`;
+            ctx.textAlign = 'center';
+            ctx.fillText('!', x, y + 5 * scale);
+        }
+        
+        function drawDetectionZone() {
+            if (!avoidanceTriggered) {
+                ctx.strokeStyle = 'rgba(255, 152, 0, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([5, 5]);
+                ctx.beginPath();
+                ctx.arc(accidentZone.x, accidentZone.y, detectionRadius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+        }
+        
+        function drawAltitudeBar() {
+            // Draw altitude bar perfectly fitted to canvas
+            const barWidth = 20;
+            const barX = canvas.width - barWidth - 10; // 10px margin from right edge
+            const barY = 100; // Start below the text area
+            const barHeight = canvas.height - barY - 20; // Fit to bottom with 20px margin
+            
+            // Draw bar background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(barX, barY, barWidth, barHeight);
+            
+            // Draw bar border
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(barX, barY, barWidth, barHeight);
+            
+            // Fill only the 120m-240m range with red color (bottom quarter)
+            const redZoneHeight = barHeight / 4; // 120m-240m is the bottom 25% of the range
+            ctx.fillStyle = '#D0021B';
+            ctx.fillRect(barX + 2, barY + barHeight - redZoneHeight, barWidth - 4, redZoneHeight - 2);
+            
+            // Draw altitude labels
+            ctx.fillStyle = '#FAFAFA';
+            ctx.font = '12px Arial';
+            ctx.textAlign = 'right';
+            
+            const altitudes = [600, 480, 360, 240, 120];
+            for (let i = 0; i < altitudes.length; i++) {
+                const y = barY + (i * (barHeight / (altitudes.length - 1)));
+                ctx.fillText(altitudes[i] + 'm', barX - 5, y + 4);
+                
+                // Draw tick marks
+                ctx.strokeStyle = '#FFF';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(barX, y);
+                ctx.lineTo(barX + barWidth, y);
+                ctx.stroke();
+            }
+        }
+        
+        function initializeNoiseDrones() {
+            // Reset animation variables
+            noiseAnimationTime = 0;
+            noiseCancellationActive = false;
+            cancellationPulse = 0;
+            
+            // Initialize main drones
+            mainDrone1 = { x: noiseCanvas.width / 4, y: noiseCanvas.height / 2, angle: 0 };
+            mainDrone2 = { x: (noiseCanvas.width * 3) / 4, y: noiseCanvas.height / 2, angle: 0 };
+            
+            // Initialize small drones for division 1
+            noiseDrones1 = [];
+            for (let i = 0; i < 4; i++) {
+                const angle = (i * Math.PI) / 2;
+                noiseDrones1.push({
+                    baseX: mainDrone1.x + Math.cos(angle) * 60,
+                    baseY: mainDrone1.y + Math.sin(angle) * 60,
+                    x: 0, y: 0,
+                    angle: angle,
+                    id: i + 1,
+                    orbitAngle: angle
+                });
+            }
+            
+            // Initialize small drones for division 2 - increased spacing
+            noiseDrones2 = [];
+            for (let i = 0; i < 4; i++) {
+                const angle = (i * Math.PI) / 2;
+                noiseDrones2.push({
+                    baseX: mainDrone2.x + Math.cos(angle) * 80, // Increased from 60 to 80
+                    baseY: mainDrone2.y + Math.sin(angle) * 80, // Increased from 60 to 80
+                    x: 0, y: 0,
+                    angle: angle,
+                    id: i + 1,
+                    orbitAngle: angle,
+                    cancellationSignal: false
+                });
+            }
+        }
+        
+        function updateNoiseDrones() {
+            noiseAnimationTime += 0.005; // Much slower time progression (0.5x slower)
+            cancellationPulse += 0.025;  // Much slower pulse (0.5x slower)
+            
+            // Update main drone rotation - much slower
+            mainDrone1.angle += 0.0025; // Much slower rotation (0.5x slower)
+            mainDrone2.angle += 0.0025; // Much slower rotation (0.5x slower)
+            
+            // Division 1 small drones removed - only main drone remains
+            
+            // Update division 2 drones (orbit with cancellation signals) - much slower
+            for (let i = 0; i < noiseDrones2.length; i++) {
+                const drone = noiseDrones2[i];
+                drone.orbitAngle += 0.002; // Much slower orbit (0.5x slower)
+                drone.x = drone.baseX + Math.cos(drone.orbitAngle) * 2; // Reduced movement for tighter formation
+                drone.y = drone.baseY + Math.sin(drone.orbitAngle) * 2; // Reduced movement for tighter formation
+                
+                // Trigger cancellation signals periodically - much slower pulse
+                drone.cancellationSignal = Math.sin(cancellationPulse + i) > 0.5;
+            }
+            
+            // Update noise levels
+            // Division 1: Fluctuating noise (55-85 dB)
+            currentNoiseLevel1 = 70 + Math.sin(noiseAnimationTime * 2) * 10 + Math.random() * 5;
+            currentNoiseLevel1 = Math.max(55, Math.min(85, currentNoiseLevel1));
+            
+            // Division 2: Noise with cancellation effect - ultra smooth transitions
+            const baseCancellationLevel = 40 + Math.sin(noiseAnimationTime * 0.5) * 2; // Very slow, gentle fluctuation
+            let cancellationReduction = 0;
+            
+            // Check if any drone is sending cancellation signal
+            noiseCancellationActive = noiseDrones2.some(drone => drone.cancellationSignal);
+            
+            if (noiseCancellationActive) {
+                cancellationReduction = 8 + Math.sin(cancellationPulse * 0.3) * 1; // Very gentle reduction
+            }
+            
+            // Calculate target noise level
+            targetNoiseLevel2 = baseCancellationLevel - cancellationReduction;
+            targetNoiseLevel2 = Math.max(30, Math.min(42, targetNoiseLevel2));
+            
+            // Smooth transition to target level (no sudden jumps)
+            const smoothingFactor = 0.02; // Very gradual transition
+            currentNoiseLevel2 += (targetNoiseLevel2 - currentNoiseLevel2) * smoothingFactor;
+        }
+        
+        function drawNoiseDrone(ctx, x, y, size, color, id, angle = 0, isActive = false) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(angle);
+            
+            // Draw drone body with glow effect if active
+            if (isActive) {
+                ctx.shadowColor = color;
+                ctx.shadowBlur = 15;
+            }
+            
+            ctx.fillStyle = color;
+            ctx.fillRect(-size/2, -size/3, size, size/1.5);
+            
+            ctx.shadowBlur = 0; // Reset shadow
+            
+            // Draw propellers with rotation - much slower
+            ctx.fillStyle = '#333';
+            const propOffset = size * 0.6;
+            const propRotation = noiseAnimationTime * 2.5; // Much slower propeller rotation (0.5x slower)
+            
+            // Four propeller positions
+            const positions = [
+                {x: -propOffset, y: -propOffset/2},
+                {x: propOffset, y: -propOffset/2},
+                {x: -propOffset, y: propOffset/2},
+                {x: propOffset, y: propOffset/2}
+            ];
+            
+            for (let i = 0; i < positions.length; i++) {
+                const pos = positions[i];
+                ctx.save();
+                ctx.translate(pos.x, pos.y);
+                ctx.rotate(propRotation);
+                
+                // Propeller blades - scaled based on drone size
+                const bladeScale = size / 40; // Scale based on original size (40)
+                ctx.fillStyle = 'rgba(100, 100, 100, 0.7)';
+                ctx.fillRect(-12 * bladeScale, -2 * bladeScale, 24 * bladeScale, 4 * bladeScale);
+                ctx.fillRect(-2 * bladeScale, -12 * bladeScale, 4 * bladeScale, 24 * bladeScale);
+                
+                ctx.restore();
+            }
+            
+            // Draw drone center - scaled based on drone size
+            const centerScale = size / 40; // Scale based on original size (40)
+            ctx.fillStyle = '#2196F3';
+            ctx.beginPath();
+            ctx.arc(0, 0, 6 * centerScale, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Draw drone ID - scaled font based on drone size
+            if (id) {
+                ctx.fillStyle = 'white';
+                ctx.font = `bold ${16 * centerScale}px Arial`;
+                ctx.textAlign = 'center';
+                ctx.fillText(id.toString(), 0, 4 * centerScale);
+            }
+            
+            ctx.restore();
+        }
+        
+        function drawNoiseBar(ctx, x, y, width, height, minDb, maxDb, currentDb, title) {
+            // Draw bar background
+            ctx.fillStyle = '#333';
+            ctx.fillRect(x, y, width, height);
+            
+            // Draw bar border
+            ctx.strokeStyle = '#666';
+            ctx.lineWidth = 2;
+            ctx.strokeRect(x, y, width, height);
+            
+            // Draw current level indicator
+            const levelPercent = (currentDb - minDb) / (maxDb - minDb);
+            const levelHeight = height * levelPercent;
+            
+            // Color based on noise level - more green, less yellow
+            let levelColor;
+            if (currentDb > 65) levelColor = '#FF4444';      // Red for high noise
+            else if (currentDb > 45) levelColor = '#FFAA00'; // Yellow for medium noise (narrower range)
+            else levelColor = '#44FF44';                     // Green for low noise (wider range)
+            
+            ctx.fillStyle = levelColor;
+            ctx.fillRect(x + 2, y + height - levelHeight, width - 4, levelHeight - 2);
+            
+            // Draw labels
+            ctx.fillStyle = '#FAFAFA';
+            ctx.font = '10px Arial';
+            ctx.textAlign = 'right';
+            
+            const dbLevels = [maxDb, Math.round((maxDb + minDb) / 2), minDb];
+            for (let i = 0; i < dbLevels.length; i++) {
+                const labelY = y + (i * (height / (dbLevels.length - 1))) + 4;
+                ctx.fillText(dbLevels[i] + 'dB', x - 5, labelY);
+                
+                // Draw tick marks
+                ctx.strokeStyle = '#999';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(x, labelY - 2);
+                ctx.lineTo(x + width, labelY - 2);
+                ctx.stroke();
+            }
+            
+            // Draw title and current value
+            ctx.fillStyle = '#FAFAFA';
+            ctx.font = 'bold 12px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText(title, x + width/2, y - 10);
+            ctx.fillText(Math.round(currentDb) + 'dB', x + width/2, y + height + 20);
+        }
+        
+        function drawNoiseCanvas() {
+            noiseCtx.clearRect(0, 0, noiseCanvas.width, noiseCanvas.height);
+            
+            // Update drone positions and noise levels only if noise analysis is running
+            if (noiseAnalysisStarted) {
+                updateNoiseDrones();
+            }
+            
+            // Draw dividing line
+            noiseCtx.strokeStyle = '#666';
+            noiseCtx.lineWidth = 2;
+            noiseCtx.beginPath();
+            noiseCtx.moveTo(noiseCanvas.width / 2, 0);
+            noiseCtx.lineTo(noiseCanvas.width / 2, noiseCanvas.height);
+            noiseCtx.stroke();
+            
+            // Division 1: Normal drone noise (55-85 dB)
+            // Big drone in center - larger size for better visibility
+            drawNoiseDrone(noiseCtx, mainDrone1.x, mainDrone1.y, 60, '#FF6B6B', 'M', mainDrone1.angle);
+            
+            // Noise bar for division 1 - fitted for 600px height canvas
+            const barHeight = noiseCanvas.height - 140; // Leave 70px top and bottom margins
+            drawNoiseBar(noiseCtx, mainDrone1.x + 150, 70, 12, barHeight, 55, 85, currentNoiseLevel1, 'Normal Operation');
+            
+            // Division 2: Noise cancellation (30-55 dB)
+            // Big drone in center - larger size for better visibility
+            drawNoiseDrone(noiseCtx, mainDrone2.x, mainDrone2.y, 60, '#FF6B6B', 'M', mainDrone2.angle);
+            
+            // Four small drones with noise cancellation signals - larger size
+            for (let i = 0; i < noiseDrones2.length; i++) {
+                const drone = noiseDrones2[i];
+                const droneColor = drone.cancellationSignal ? '#00FF88' : '#95E1D3';
+                drawNoiseDrone(noiseCtx, drone.x, drone.y, 40, droneColor, drone.id, drone.orbitAngle, drone.cancellationSignal);
+                
+                // Draw cancellation signal waves when active
+                if (drone.cancellationSignal) {
+                    noiseCtx.strokeStyle = 'rgba(0, 255, 136, 0.8)';
+                    noiseCtx.lineWidth = 3;
+                    noiseCtx.setLineDash([3, 3]);
+                    
+                    // Animated wave effect
+                    const waveIntensity = Math.sin(cancellationPulse * 2) * 0.5 + 0.5;
+                    noiseCtx.globalAlpha = waveIntensity;
+                    
+                    // Draw multiple wave rings - scaled for larger drones
+                    for (let ring = 1; ring <= 3; ring++) {
+                        noiseCtx.beginPath();
+                        noiseCtx.arc(drone.x, drone.y, ring * 25 + (cancellationPulse * 8) % 25, 0, Math.PI * 2);
+                        noiseCtx.stroke();
+                    }
+                    
+                    // Draw signal line to main drone
+                    noiseCtx.beginPath();
+                    noiseCtx.moveTo(drone.x, drone.y);
+                    noiseCtx.lineTo(mainDrone2.x, mainDrone2.y);
+                    noiseCtx.stroke();
+                    
+                    noiseCtx.globalAlpha = 1;
+                    noiseCtx.setLineDash([]);
+                }
+            }
+            
+            // Noise bar for division 2 - fitted for 600px height canvas
+            const barColor = noiseCancellationActive ? '#00FF88' : '#95E1D3';
+            drawNoiseBar(noiseCtx, mainDrone2.x + 150, 70, 12, barHeight, 30, 55, currentNoiseLevel2, 'Noise Cancellation');
+            
+            // Draw cancellation status indicator - positioned for larger canvas
+            if (noiseCancellationActive) {
+                noiseCtx.fillStyle = '#00FF88';
+                noiseCtx.font = 'bold 14px Arial';
+                noiseCtx.textAlign = 'center';
+                noiseCtx.fillText('ACTIVE CANCELLATION', mainDrone2.x, mainDrone2.y + 120);
+            }
+            
+            // Labels - positioned for larger canvas
+            noiseCtx.fillStyle = '#FAFAFA';
+            noiseCtx.font = 'bold 18px Arial';
+            noiseCtx.textAlign = 'center';
+            noiseCtx.fillText('Standard Formation', mainDrone1.x, 40);
+            noiseCtx.fillText('Noise Reduction Formation', mainDrone2.x, 40);
+        }
+        
+        function drawFormationLines() {
+            // Draw main formation diamond
+            ctx.strokeStyle = formationLeader.avoiding ? 'rgba(255, 152, 0, 0.5)' : 'rgba(76, 175, 80, 0.5)';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([3, 3]);
+            
+            ctx.beginPath();
+            ctx.moveTo(drones[0].x, drones[0].y); // Top-left
+            ctx.lineTo(drones[1].x, drones[1].y); // Top-right
+            ctx.lineTo(drones[3].x, drones[3].y); // Bottom-right
+            ctx.lineTo(drones[2].x, drones[2].y); // Bottom-left
+            ctx.closePath();
+            ctx.stroke();
+            
+            // Draw cross lines for main formation
+            ctx.beginPath();
+            ctx.moveTo(drones[0].x, drones[0].y);
+            ctx.lineTo(drones[3].x, drones[3].y);
+            ctx.moveTo(drones[1].x, drones[1].y);
+            ctx.lineTo(drones[2].x, drones[2].y);
+            ctx.stroke();
+            
+            // Draw secondary formation diamond
+            ctx.strokeStyle = 'rgba(33, 150, 243, 0.5)';
+            
+            ctx.beginPath();
+            ctx.moveTo(secondaryDrones[0].x, secondaryDrones[0].y); // Top-left
+            ctx.lineTo(secondaryDrones[1].x, secondaryDrones[1].y); // Top-right
+            ctx.lineTo(secondaryDrones[3].x, secondaryDrones[3].y); // Bottom-right
+            ctx.lineTo(secondaryDrones[2].x, secondaryDrones[2].y); // Bottom-left
+            ctx.closePath();
+            ctx.stroke();
+            
+            // Draw cross lines for secondary formation
+            ctx.beginPath();
+            ctx.moveTo(secondaryDrones[0].x, secondaryDrones[0].y);
+            ctx.lineTo(secondaryDrones[3].x, secondaryDrones[3].y);
+            ctx.moveTo(secondaryDrones[1].x, secondaryDrones[1].y);
+            ctx.lineTo(secondaryDrones[2].x, secondaryDrones[2].y);
+            ctx.stroke();
+            
+            ctx.setLineDash([]);
+        }
+        
+        function initializeDrones() {
+            // Reset formation leader
+            formationLeader.x = 50;
+            formationLeader.y = 300;
+            formationLeader.avoiding = false;
+            formationLeader.avoidancePhase = 0;
+            formationLeader.avoidanceWaypoints = [];
+            formationLeader.currentWaypointIndex = 0;
+            formationLeader.opacity = 1.0;
+            formationLeader.vanishing = false;
+            avoidanceTriggered = false;
+            
+            // Reset secondary leader
+            secondaryLeader.x = 50;
+            secondaryLeader.y = 450;
+            secondaryLeader.opacity = 1.0;
+            secondaryLeader.vanishing = false;
+            
+            // Initialize noise drones
+            initializeNoiseDrones();
+            
+            // Create main formation of 4 drones around formation leader
+            const spacing = 25;
+            drones = [
+                new Drone(formationLeader.x, formationLeader.y, 1, -spacing, -spacing), // Top-left
+                new Drone(formationLeader.x, formationLeader.y, 2, spacing, -spacing),  // Top-right
+                new Drone(formationLeader.x, formationLeader.y, 3, -spacing, spacing),  // Bottom-left
+                new Drone(formationLeader.x, formationLeader.y, 4, spacing, spacing)    // Bottom-right
+            ];
+            
+            // Create secondary formation of 4 drones (flying left to right below)
+            const secondarySpacing = 25;
+            secondaryDrones = [
+                new Drone(secondaryLeader.x, secondaryLeader.y, 5, -secondarySpacing, -secondarySpacing, true), // Top-left
+                new Drone(secondaryLeader.x, secondaryLeader.y, 6, secondarySpacing, -secondarySpacing, true),  // Top-right
+                new Drone(secondaryLeader.x, secondaryLeader.y, 7, -secondarySpacing, secondarySpacing, true),  // Bottom-left
+                new Drone(secondaryLeader.x, secondaryLeader.y, 8, secondarySpacing, secondarySpacing, true)    // Bottom-right
+            ];
+        }
+        
+        function animate() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Update formation leaders
+            updateFormationLeader();
+            updateSecondaryLeader();
+            
+            // Draw accident zone and detection zone
+            drawAccidentZone();
+            drawDetectionZone();
+            
+            // Draw formation paths
+            drawFormationPath();
+            
+            // Update and draw all main formation drones
+            for (let i = 0; i < drones.length; i++) {
+                drones[i].update();
+                drones[i].draw();
+            }
+            
+            // Update and draw all secondary formation drones
+            for (let i = 0; i < secondaryDrones.length; i++) {
+                secondaryDrones[i].update();
+                secondaryDrones[i].draw();
+            }
+            
+            // Draw formation lines
+            drawFormationLines();
+            
+            // Draw altitude bar
+            drawAltitudeBar();
+            
+            // Status text
+            ctx.fillStyle = '#FAFAFA';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'left';
+            const status = avoidanceTriggered ? 'STATUS: Main Formation Avoiding | Secondary Formation Normal Flight' : 'STATUS: Both Formations in Normal Flight';
+            ctx.fillText(status, 20, 30);
+            
+            if (simulationStarted) {
+                animationId = requestAnimationFrame(animate);
+            }
+        }
+        
+        function animateNoise() {
+            drawNoiseCanvas();
+            
+            if (noiseAnalysisStarted) {
+                noiseAnimationId = requestAnimationFrame(animateNoise);
+            }
+        }
+        
+        function startSimulation() {
+            if (!simulationStarted) {
+                simulationStarted = true;
+                document.getElementById('startBtn').disabled = true;
+                animate();
+            }
+        }
+        
+        function startNoiseAnalysis() {
+            if (!noiseAnalysisStarted) {
+                noiseAnalysisStarted = true;
+                document.getElementById('startNoiseBtn').disabled = true;
+                animateNoise();
+            }
+        }
+        
+        function resetNoiseAnalysis() {
+            noiseAnalysisStarted = false;
+            if (noiseAnimationId) {
+                cancelAnimationFrame(noiseAnimationId);
+            }
+            document.getElementById('startNoiseBtn').disabled = false;
+            
+            // Reset noise levels for smooth startup
+            currentNoiseLevel2 = 38;
+            targetNoiseLevel2 = 38;
+            
+            initializeNoiseDrones();
+            
+            // Draw initial noise canvas state
+            drawNoiseCanvas();
+        }
+        
+        function resetSimulation() {
+            simulationStarted = false;
+            if (animationId) {
+                cancelAnimationFrame(animationId);
+            }
+            document.getElementById('startBtn').disabled = false;
+            initializeDrones();
+            
+            // Draw initial state
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawAccidentZone();
+            drawDetectionZone();
+            drawFormationPath();
+            
+            for (let i = 0; i < drones.length; i++) {
+                drones[i].draw();
+            }
+            
+            for (let i = 0; i < secondaryDrones.length; i++) {
+                secondaryDrones[i].draw();
+            }
+            
+            drawFormationLines();
+            
+            // Draw altitude bar
+            drawAltitudeBar();
+            
+            // Status text
+            ctx.fillStyle = '#FAFAFA';
+            ctx.font = '14px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText('STATUS: Ready to Start Both Formation Flights', 20, 30);
+        }
+        
+        // Initialize the simulation
+        initializeDrones();
+        resetSimulation();
+        resetNoiseAnalysis();
+    </script>
+</body>
+</html>
